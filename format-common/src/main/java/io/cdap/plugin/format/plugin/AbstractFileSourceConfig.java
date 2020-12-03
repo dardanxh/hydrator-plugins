@@ -1,5 +1,5 @@
 /*
- * Copyright © 2018-2019 Cask Data, Inc.
+ * Copyright © 2018-2020 Cask Data, Inc.
  *
  * Licensed under the Apache License, Version 2.0 (the "License"); you may not
  * use this file except in compliance with the License. You may obtain a copy of
@@ -25,6 +25,7 @@ import io.cdap.cdap.api.plugin.PluginConfig;
 import io.cdap.cdap.etl.api.FailureCollector;
 import io.cdap.plugin.common.IdUtils;
 import io.cdap.plugin.format.FileFormat;
+import io.cdap.plugin.format.charset.fixedlength.FixedLengthCharset;
 
 import java.util.regex.Pattern;
 import javax.annotation.Nullable;
@@ -37,7 +38,8 @@ import javax.annotation.Nullable;
 public abstract class AbstractFileSourceConfig extends PluginConfig implements FileSourceProperties {
   public static final String NAME_FORMAT = "format";
   public static final String NAME_SCHEMA = "schema";
-  
+  public static final String DEFAULT_FILE_ENCODING = "utf-8";
+
   @Description("Name be used to uniquely identify this source for lineage, annotating metadata, etc.")
   private String referenceName;
 
@@ -102,8 +104,13 @@ public abstract class AbstractFileSourceConfig extends PluginConfig implements F
   @Macro
   @Nullable
   @Description("Whether to skip the first line of each file. Supported formats are 'text', 'csv', 'tsv', " +
-                 "'delimited'. Default value is false.")
+    "'delimited'. Default value is false.")
   private Boolean skipHeader;
+
+  @Macro
+  @Nullable
+  @Description("File encoding for the source files. The default encoding is 'UTF-8'")
+  private String fileEncoding;
 
   // this is a hidden property that only exists for wrangler's parse-as-csv that uses the header as the schema
   // when this is true and the format is text, the header will be the first record returned by every record reader
@@ -131,6 +138,17 @@ public abstract class AbstractFileSourceConfig extends PluginConfig implements F
       getSchema();
     } catch (IllegalArgumentException e) {
       collector.addFailure(e.getMessage(), null).withConfigProperty(NAME_SCHEMA).withStacktrace(e.getStackTrace());
+    }
+
+    if (fileEncoding != null && !fileEncoding.isEmpty()) {
+      fileEncoding = cleanFileEncodingName(fileEncoding);
+
+      if (!fileEncoding.equalsIgnoreCase(DEFAULT_FILE_ENCODING)
+        && !FixedLengthCharset.isValidEncoding(fileEncoding)) {
+        collector.addFailure("Specified file encoding is not valid.",
+                             "Use one of the supported file encodings.");
+      }
+
     }
 
     // if failure collector has not collected any errors, that would mean either validation has succeeded or config
@@ -199,6 +217,15 @@ public abstract class AbstractFileSourceConfig extends PluginConfig implements F
   }
 
   @Nullable
+  public String getFileEncoding() {
+    return fileEncoding;
+  }
+
+  public String getDefaultFileEncoding() {
+    return DEFAULT_FILE_ENCODING;
+  }
+
+  @Nullable
   public Schema getSchema() {
     try {
       return containsMacro(NAME_SCHEMA) || Strings.isNullOrEmpty(schema) ? null : Schema.parseJson(schema);
@@ -209,5 +236,17 @@ public abstract class AbstractFileSourceConfig extends PluginConfig implements F
 
   public boolean shouldCopyHeader() {
     return copyHeader;
+  }
+
+  /**
+   * Takes the first word of the file encoding string, as any further words are just charset descriptions.
+   *
+   * @param fileEncoding The file encoding parameter supplied by the user
+   * @return the cleaned up file encoding name
+   */
+  public static String cleanFileEncodingName(String fileEncoding) {
+    fileEncoding = fileEncoding.trim();
+
+    return fileEncoding.split(" ")[0];
   }
 }
